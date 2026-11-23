@@ -2,13 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 
-/**
- * Backend contract (to be implemented with Supabase + Resend):
- *   POST /api/subscribe  { email: string }
- *   200 -> subscription request accepted (confirmation email sent)
- *   4xx/5xx -> optional JSON { error: string }
- * Success is only shown when the server responds with a 2xx status.
- */
+/** POST /api/subscribe -> { status, message }. Success is shown only on a 2xx response. */
 const SUBSCRIBE_ENDPOINT = "/api/subscribe";
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
@@ -18,9 +12,11 @@ export default function SubscribeForm() {
   const [email, setEmail] = useState("");
   const [status, setStatus] = useState<Status>("idle");
   const [message, setMessage] = useState("");
+  const [website, setWebsite] = useState(""); // honeypot
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (status === "loading") return;
     const value = email.trim();
 
     if (!EMAIL_RE.test(value)) {
@@ -36,27 +32,27 @@ export default function SubscribeForm() {
       const res = await fetch(SUBSCRIBE_ENDPOINT, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: value }),
+        body: JSON.stringify({ email: value, website }),
       });
 
+      let data: { status?: string; message?: string } = {};
+      try {
+        data = await res.json();
+      } catch {}
+
       if (!res.ok) {
-        let detail = "";
-        try {
-          detail = (await res.json())?.error ?? "";
-        } catch {}
-        throw new Error(detail || `Request failed (${res.status})`);
+        setStatus("error");
+        setMessage(data.message || "We couldn't complete your subscription. Please try again in a moment.");
+        return;
       }
 
+      // Only a 2xx from the server counts. "pending" = confirmation email sent.
       setStatus("success");
-      setMessage(`Almost done. Check ${value} for a confirmation link.`);
-      setEmail("");
-    } catch (err) {
+      setMessage(data.message || "Check your inbox for a confirmation link.");
+      if (data.status === "pending") setEmail("");
+    } catch {
       setStatus("error");
-      setMessage(
-        err instanceof Error && err.message && !err.message.startsWith("Request failed")
-          ? err.message
-          : "We couldn't complete your subscription. Please try again in a moment."
-      );
+      setMessage("We couldn't reach the server. Check your connection and try again.");
     }
   }
 
@@ -69,6 +65,11 @@ export default function SubscribeForm() {
       <p className="mt-3 text-sm text-[#5a6b85]">
         Enter your email address to receive our weekly newsletter.
       </p>
+
+      <div aria-hidden="true" style={{ position: "absolute", left: "-9999px", height: 0, overflow: "hidden" }}>
+        <label htmlFor="website">Leave this field empty</label>
+        <input id="website" name="website" type="text" tabIndex={-1} autoComplete="off" value={website} onChange={(e) => setWebsite(e.target.value)} />
+      </div>
 
       <label htmlFor="email" className="sr-only">
         Email address
