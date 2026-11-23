@@ -1,12 +1,10 @@
-import { NextResponse } from "next/server";
+﻿import { NextResponse } from "next/server";
 import { supabaseAdmin, SUBSCRIBER_COLS, type Subscriber } from "@/lib/supabase/admin";
 import { sendEmail } from "@/lib/resend/server";
 import { hashToken, newToken } from "@/lib/newsletter/tokens";
 import { confirmationEmail } from "@/lib/newsletter/email-templates";
 import { siteUrl } from "@/lib/env";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
 
 const MAX_BODY = 2048;
 const COOLDOWN_MS = 2 * 60 * 1000;

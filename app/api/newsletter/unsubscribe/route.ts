@@ -1,10 +1,8 @@
-import { supabaseAdmin } from "@/lib/supabase/admin";
+﻿import { supabaseAdmin } from "@/lib/supabase/admin";
 import { syncUnsubscribedContact } from "@/lib/resend/server";
 import { hashToken, isTokenShape } from "@/lib/newsletter/tokens";
 import { esc, pageHtml } from "@/lib/newsletter/email-templates";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
 
 const invalid = () => pageHtml("Link not valid", "<p>This unsubscribe link is invalid or has already been used.</p>", 400);
 
