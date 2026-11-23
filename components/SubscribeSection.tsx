@@ -15,7 +15,7 @@ export default function SubscribeSection() {
         id="subscribe-heading"
         className="mt-6 text-[1.6rem] font-semibold leading-tight sm:text-3xl"
       >
-        Become the Trader You Set Out to Be.
+        GET TIMELY UPDATES.
       </h1>
       <p className="mx-auto mt-4 max-w-3xl text-base leading-relaxed text-[#5a6b85]">
         Better trading starts with better habits. Get weekly insights, reflect on
