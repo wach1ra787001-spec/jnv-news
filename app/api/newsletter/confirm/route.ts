@@ -4,7 +4,6 @@ import { hashToken, isTokenShape, newToken } from "@/lib/newsletter/tokens";
 import { esc, pageHtml, welcomeEmail } from "@/lib/newsletter/email-templates";
 import { siteUrl } from "@/lib/env";
 
-
 const invalid = () =>
   pageHtml(
     "Link not valid",
@@ -14,8 +13,8 @@ const invalid = () =>
 
 type Pending = { id: string; email: string };
 
-/** Shared by GET and POST: the token must match a pending subscriber and not be expired. */
-async function findPending(token: string, hash: string): Promise<Pending | null> {
+/** Shared by GET and POST. Returns null for an unknown/expired token; throws on a database error. */
+async function findPending(hash: string): Promise<Pending | null> {
   const { data, error } = await supabaseAdmin()
     .from("newsletter_subscribers")
     .select("id,email,confirmation_token_expires_at")
@@ -24,24 +23,19 @@ async function findPending(token: string, hash: string): Promise<Pending | null>
     .maybeSingle();
   if (error) throw error;
 
-  const sub = data as
-    | { id: string; email: string; confirmation_token_expires_at: string | null }
-    | null;
+  const sub = data as { id: string; email: string; confirmation_token_expires_at: string | null } | null;
   if (!sub || !sub.confirmation_token_expires_at) return null;
   if (new Date(sub.confirmation_token_expires_at) < new Date()) return null;
   return { id: sub.id, email: sub.email };
 }
 
-/**
- * GET is read-only. Mail scanners that follow the link cannot activate anyone.
- * It validates the token and shows a button that POSTs back to this endpoint.
- */
+/** GET is read-only: it validates the token and shows a button that POSTs back here. */
 export async function GET(request: Request) {
   const token = new URL(request.url).searchParams.get("token");
   if (!isTokenShape(token)) return invalid();
 
   try {
-    if (!(await findPending(token, hashToken(token)))) return invalid();
+    if (!(await findPending(hashToken(token)))) return invalid();
   } catch (err) {
     console.error("[confirm:GET] failed:", err instanceof Error ? err.message : "unknown");
     return pageHtml("Something went wrong", "<p>Please try the link again shortly.</p>", 500);
@@ -57,7 +51,6 @@ export async function GET(request: Request) {
   );
 }
 
-/** POST repeats every check, then syncs Resend, activates in Supabase and sends the welcome email. */
 export async function POST(request: Request) {
   let token: string | null = null;
   try {
@@ -68,19 +61,16 @@ export async function POST(request: Request) {
   if (!isTokenShape(token)) return invalid();
 
   try {
-    const db = supabaseAdmin();
     const hash = hashToken(token);
-
-    const sub = await findPending(token, hash);
+    const sub = await findPending(hash);
     if (!sub) return invalid();
 
-    // 1. Sync the confirmed contact to the Resend segment. Nothing is activated if this fails.
+    // 1. Resend first. Nothing is activated if this fails.
     await syncConfirmedContact(sub.email);
 
-    // 2. Activate. The update only matches if the subscriber is still pending with this
-    //    same token hash, so a link can be used once even if two requests race.
+    // 2. Activate only if still pending with this same token hash (single use, race-safe).
     const unsubToken = newToken();
-    const { data: updated, error } = await db
+    const { data: updated, error } = await supabaseAdmin()
       .from("newsletter_subscribers")
       .update({
         status: "active",
@@ -97,25 +87,26 @@ export async function POST(request: Request) {
     if (error) throw error;
     if (!updated?.length) return invalid();
 
-    // 3. Welcome email. The subscription is already confirmed, so a failure is logged, not shown.
+    // 3. Welcome email. The subscriber stays active whether or not this succeeds.
+    let welcomeSent = false;
     try {
       const link = `${siteUrl()}/api/newsletter/unsubscribe?token=${unsubToken}`;
       await sendEmail({
         to: sub.email,
         ...welcomeEmail(link),
-        headers: {
-          "List-Unsubscribe": `<${link}>`,
-          "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
-        },
+        headers: { "List-Unsubscribe": `<${link}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" },
       });
+      welcomeSent = true;
     } catch (e) {
       console.error("[confirm] welcome email failed:", e instanceof Error ? e.message : "unknown");
     }
 
-    return pageHtml(
-      "Subscription confirmed",
-      "<p>You're subscribed to The JnV Weekly. A welcome email is on its way.</p>"
-    );
+    return welcomeSent
+      ? pageHtml("Subscription confirmed", "<p>You're subscribed to The JnV Weekly. A welcome email is on its way.</p>")
+      : pageHtml(
+          "Subscription confirmed",
+          "<p>Your subscription is confirmed, but we couldn't send your welcome email. Your subscription is active.</p>"
+        );
   } catch (err) {
     console.error("[confirm:POST] failed:", err instanceof Error ? err.message : "unknown");
     return pageHtml(

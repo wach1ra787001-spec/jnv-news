@@ -1,33 +1,23 @@
-﻿import { NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { supabaseAdmin, SUBSCRIBER_COLS, type Subscriber } from "@/lib/supabase/admin";
 import { sendEmail } from "@/lib/resend/server";
 import { hashToken, newToken } from "@/lib/newsletter/tokens";
 import { confirmationEmail } from "@/lib/newsletter/email-templates";
+import { checkSubscribeLimit } from "@/lib/ratelimit";
 import { siteUrl } from "@/lib/env";
-
 
 const MAX_BODY = 2048;
 const COOLDOWN_MS = 2 * 60 * 1000;
 const TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
-// Best-effort per-instance limiter. On serverless, replace with a shared store (e.g. Upstash).
-const hits = new Map<string, number[]>();
-function limited(ip: string) {
-  const now = Date.now();
-  const recent = (hits.get(ip) ?? []).filter((t) => now - t < 10 * 60 * 1000);
-  recent.push(now);
-  hits.set(ip, recent);
-  if (hits.size > 5000) hits.clear();
-  return recent.length > 8;
-}
-
 const reply = (status: number, code: string, message: string) =>
   NextResponse.json({ status: code, message }, { status });
 
 export async function POST(request: Request) {
-  const ip = request.headers.get("x-forwarded-for")?.split(",")[0].trim() ?? "unknown";
-  if (limited(ip)) return reply(429, "rate_limited", "Too many attempts. Please try again in a few minutes.");
+  const limit = await checkSubscribeLimit(request);
+  if (limit === "unavailable") return reply(503, "unavailable", "Subscriptions are temporarily unavailable. Please try again shortly.");
+  if (limit === "limited") return reply(429, "rate_limited", "Too many attempts. Please try again in a few minutes.");
 
   const len = Number(request.headers.get("content-length") ?? 0);
   if (len > MAX_BODY) return reply(413, "too_large", "Request too large.");
